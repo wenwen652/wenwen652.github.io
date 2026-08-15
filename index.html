@@ -326,8 +326,27 @@
             position: relative; z-index: 1;
         }
         .verify-box .sub {
-            color: #9f7a7f; font-size: 0.9rem; margin-bottom: 2rem; letter-spacing: 0.04em;
+            color: #9f7a7f; font-size: 0.9rem; margin-bottom: 1.6rem; letter-spacing: 0.04em;
             position: relative; z-index: 1;
+        }
+        .device-code-box {
+            position: relative; z-index: 1;
+            margin: 0 0 1.5rem; padding: 14px 20px 16px;
+            border-radius: 18px;
+            background: rgba(225,29,72,0.05);
+            border: 1px dashed rgba(225,29,72,0.28);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+        }
+        .device-code-label {
+            display: block; font-size: 0.72rem; color: #b08992;
+            letter-spacing: 0.18em; margin-bottom: 6px;
+        }
+        .device-code {
+            font-family: var(--font-mono);
+            font-size: 2rem; font-weight: 700; letter-spacing: 0.3em;
+            color: #e11d48;
+            text-shadow: 0 2px 12px rgba(225,29,72,0.18);
+            line-height: 1.1;
         }
         .verify-box .input-group { position: relative; margin: 0 0 20px; z-index: 1; }
         .verify-box .input-group input {
@@ -1371,6 +1390,27 @@
             font-size: 0.78rem; color: var(--text-muted);
         }
 
+        /* ===== 点击单词显示音标 ===== */
+        .clickable-word {
+            display: inline-block; cursor: pointer;
+            border-bottom: 1px dashed rgba(var(--primary-rgb), 0.45);
+            transition: color 0.2s ease;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .clickable-word:hover { color: var(--primary); }
+        .clickable-word.has-phonetic { border-bottom-style: solid; color: var(--primary); }
+        .inline-phonetic {
+            display: block; font-family: var(--font-mono);
+            font-size: 0.8em; color: var(--text-muted);
+            margin-top: 3px; letter-spacing: 0.02em;
+            animation: phoneticIn 0.25s cubic-bezier(0.16,1,0.3,1);
+        }
+        @keyframes phoneticIn {
+            from { opacity: 0; transform: translateY(-4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .preview-word-item { cursor: pointer; }
+
         /* ===== 移动端键盘适配 ===== */
         body.kb-open #sidebar { display: none !important; }
         body.kb-open #main-content { padding-bottom: 1rem; }
@@ -1570,9 +1610,13 @@
         <div class="verify-box">
             <span class="icon"><svg class="verify-icon" viewBox="0 0 24 24" fill="none" stroke="#e11d48" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="10" width="20" height="12" rx="2"></rect><path d="M12 16v-3"></path><circle cx="12" cy="7" r="3"></circle></svg></span>
             <h1>高考词汇学习</h1>
-            <p class="sub" id="verify-sub">请输入密码进入</p>
+            <p class="sub" id="verify-sub">请输入激活码进入</p>
+            <div class="device-code-box">
+                <span class="device-code-label">本机设备码</span>
+                <div class="device-code" id="device-code">·····</div>
+            </div>
             <div class="input-group" id="verify-pwd-group">
-                <input type="password" id="verify-code" placeholder="请输入密码" autocomplete="off" inputmode="numeric" pattern="[0-9]*" maxlength="4">
+                <input type="password" id="verify-code" placeholder="请输入激活码" autocomplete="off" inputmode="numeric" pattern="[0-9]*" maxlength="2">
             </div>
             <button class="btn-confirm" id="verify-btn">确认进入</button>
         </div>
@@ -4152,7 +4196,31 @@
         {"zh":"n.激光唱片;光碟,光盘","unit":"6","en":"disc","type":"选修4","book":"选修4","phonetic":"/dɪsk/"}
     ];
     // ========== PASSWORD ==========
-    const FIXED_PASSWORD = '0124';
+    function getDeviceFingerprint() {
+        const parts = [
+            navigator.userAgent || '',
+            navigator.language || '',
+            navigator.platform || '',
+            screen.width + 'x' + screen.height + 'x' + (screen.colorDepth || 0),
+            new Date().getTimezoneOffset(),
+            navigator.hardwareConcurrency || '',
+            navigator.deviceMemory || '',
+            navigator.maxTouchPoints || 0
+        ];
+        return parts.join('|');
+    }
+
+    async function getDeviceCode() {
+        const hash = await sha256Hex(getDeviceFingerprint());
+        const num = parseInt(hash.slice(0, 8), 16) % 100000;
+        return String(num).padStart(5, '0');
+    }
+
+    function calcActivation(deviceCode) {
+        let sum = 0;
+        for (let i = 0; i < deviceCode.length; i++) sum += parseInt(deviceCode[i], 10);
+        return String(sum % 11);
+    }
 
     // ========== 本地词典（含音标） ==========
     const LOCAL_DICT = {
@@ -4555,17 +4623,39 @@
     const MAX_WORDS_PER_PAGE = 26;
 
     // ========== LOGIN ==========
+    let deviceCode = '';
+
+    (async function initVerify() {
+        deviceCode = await getDeviceCode();
+        const codeEl = document.getElementById('device-code');
+        if (codeEl) codeEl.textContent = deviceCode;
+        if (localStorage.getItem('vocab_verified') === '1' && localStorage.getItem('vocab_device_code') === deviceCode) {
+            document.getElementById('verify-pwd-group').style.display = 'none';
+            document.getElementById('verify-sub').textContent = '欢迎回来';
+            document.getElementById('verify-btn').textContent = '进入';
+            document.getElementById('verify-btn').onclick = function() {
+                showApp();
+            };
+        }
+    })();
+
     document.getElementById('verify-btn').addEventListener('click', doVerify);
     document.getElementById('verify-code').addEventListener('keydown', function(e) {
         if (e.key === 'Enter') doVerify();
     });
 
-    function doVerify() {
+    async function doVerify() {
         const input = document.getElementById('verify-code');
         const val = input.value.trim();
-        if (val === FIXED_PASSWORD) {
+        if (!deviceCode) deviceCode = await getDeviceCode();
+        if (localStorage.getItem('vocab_verified') === '1' && localStorage.getItem('vocab_device_code') === deviceCode) {
+            showApp();
+            return;
+        }
+        if (val === calcActivation(deviceCode)) {
             input.classList.remove('error');
             localStorage.setItem('vocab_verified', '1');
+            localStorage.setItem('vocab_device_code', deviceCode);
             showApp();
         } else {
             input.classList.add('error');
@@ -4584,17 +4674,6 @@
         });
         initApp();
     }
-
-    (function() {
-        if (localStorage.getItem('vocab_verified') === '1') {
-            document.getElementById('verify-pwd-group').style.display = 'none';
-            document.getElementById('verify-sub').textContent = '欢迎回来';
-            document.getElementById('verify-btn').textContent = '进入';
-            document.getElementById('verify-btn').onclick = function() {
-                showApp();
-            };
-        }
-    })();
 
     // ========== INIT ==========
     function initApp() {
@@ -5022,6 +5101,26 @@
     }
 
     // ========== TABLE PAGE ==========
+    function escAttr(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function togglePhonetic(el) {
+        const phonetic = el.getAttribute('data-phonetic');
+        if (!phonetic) return;
+        let ph = el.querySelector('.inline-phonetic');
+        if (ph) {
+            ph.remove();
+            el.classList.remove('has-phonetic');
+            return;
+        }
+        ph = document.createElement('span');
+        ph.className = 'inline-phonetic';
+        ph.textContent = phonetic;
+        el.appendChild(ph);
+        el.classList.add('has-phonetic');
+    }
+
     function initTable() {
         tableData = [...WORDS_DATA];
         applyTableFilter();
@@ -5093,7 +5192,7 @@
             tbody.innerHTML = pageData.map((w, i) => `
                 <tr>
                     <td class="col-index">${start + i + 1}</td>
-                    <td class="col-en">${w.en}</td>
+                    <td class="col-en"><span class="clickable-word" data-phonetic="${escAttr(w.phonetic || '')}" onclick="togglePhonetic(this)">${w.en}</span></td>
                     <td>${w.zh}</td>
                     <td>${w.book}</td>
                     <td class="col-unit">${w.unit}</td>
@@ -5839,7 +5938,7 @@
         const words = getDayWords(false);
         count.textContent = `共 ${words.length} 词`;
         list.innerHTML = words.map(w =>
-            `<div class="preview-word-item"><span class="pw-en">${w.en}</span><span class="pw-zh">${w.zh}</span></div>`
+            `<div class="preview-word-item" data-phonetic="${escAttr(w.phonetic || '')}" onclick="togglePhonetic(this)"><span class="pw-en">${w.en}</span><span class="pw-zh">${w.zh}</span></div>`
         ).join('');
         preview.style.display = 'block';
     }
@@ -5937,12 +6036,12 @@
             recite3500State.correct++;
             input.classList.add('correct');
             feedback.className = 'feedback correct';
-            feedback.textContent = '✓ 正确！';
+            feedback.innerHTML = `✓ 正确！ <span class="correct-answer clickable-word" data-phonetic="${escAttr(word.phonetic || '')}" onclick="togglePhonetic(this)">${word.en}</span>`;
         } else {
             recite3500State.wrong++;
             input.classList.add('wrong');
             feedback.className = 'feedback wrong';
-            feedback.innerHTML = `✗ 错误！正确答案: <span class="correct-answer">${word.en}</span>`;
+            feedback.innerHTML = `✗ 错误！正确答案: <span class="correct-answer clickable-word" data-phonetic="${escAttr(word.phonetic || '')}" onclick="togglePhonetic(this)">${word.en}</span>`;
         }
         submitBtn.style.display = 'none';
         nextBtn.style.display = 'inline-flex';
