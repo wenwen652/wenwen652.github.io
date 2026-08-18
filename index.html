@@ -5030,7 +5030,46 @@
 
     function stopYdAudio() {
         if (ydAudio) { ydAudio.pause(); ydAudio = null; }
+        if (window._passagePlayState) {
+            window._passagePlayState.stopped = true;
+            window._passagePlayState = null;
+        }
         document.querySelectorAll('#res-audio .audio-btn, .passage-speak').forEach(b => b.classList.remove('playing'));
+    }
+
+    function splitTextForTts(text, maxChars) {
+        if (!text) return [];
+        if (text.length <= maxChars) return [text];
+        const sentences = [];
+        let current = '';
+        const separators = ['. ', '! ', '? ', '.\n', '!\n', '?\n', '." ', '!" ', '?" ', '— ', '; ', ': '];
+        let i = 0;
+        while (i < text.length) {
+            if (current.length >= maxChars && text[i] === ' ') {
+                sentences.push(current.trim());
+                current = '';
+                i++;
+                continue;
+            }
+            current += text[i];
+            let matched = false;
+            for (let s = 0; s < separators.length; s++) {
+                const sep = separators[s];
+                if (text.substr(i, sep.length) === sep) {
+                    current += sep.slice(1);
+                    i += sep.length;
+                    if (current.length >= maxChars * 0.4) {
+                        sentences.push(current.trim());
+                        current = '';
+                    }
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched) i++;
+        }
+        if (current.trim()) sentences.push(current.trim());
+        return sentences.filter(s => s.length > 0);
     }
 
     function playDictvoice(word, type, btn) {
@@ -6146,16 +6185,67 @@
         stopYdAudio();
         const btn = document.querySelector('#passage-' + i + ' .passage-speak');
         if (btn) btn.classList.add('playing');
-        youdaoTts(p.en.slice(0, 2000), 'en-US').then(url => {
-            const audio = new Audio(url);
-            ydAudio = audio;
-            audio.onended = function() { if (btn) btn.classList.remove('playing'); URL.revokeObjectURL(url); ydAudio = null; };
-            audio.onerror = function() { if (btn) btn.classList.remove('playing'); URL.revokeObjectURL(url); ydAudio = null; };
-            audio.play().catch(function() { if (btn) btn.classList.remove('playing'); ydAudio = null; });
-        }).catch(function(e) {
-            if (btn) btn.classList.remove('playing');
-            alert('朗读失败：' + e.message + '（请在有道智云控制台为应用绑定语音合成服务）');
-        });
+
+        const segments = splitTextForTts(p.en, 700);
+        const state = {
+            index: 0,
+            total: segments.length,
+            stopped: false,
+            urls: [],
+            btn: btn
+        };
+        window._passagePlayState = state;
+
+        function playNext() {
+            if (state.stopped || state.index >= state.total) {
+                finishAll();
+                return;
+            }
+            const segText = segments[state.index];
+            youdaoTts(segText, 'en-US').then(function(url) {
+                if (state.stopped) {
+                    URL.revokeObjectURL(url);
+                    finishAll();
+                    return;
+                }
+                state.urls.push(url);
+                const audio = new Audio(url);
+                ydAudio = audio;
+                audio.onended = function() {
+                    state.index++;
+                    ydAudio = null;
+                    playNext();
+                };
+                audio.onerror = function() {
+                    state.stopped = true;
+                    ydAudio = null;
+                    if (state.btn) state.btn.classList.remove('playing');
+                    alert('朗读失败：音频加载出错');
+                    finishAll();
+                };
+                audio.play().catch(function() {
+                    state.stopped = true;
+                    ydAudio = null;
+                    if (state.btn) state.btn.classList.remove('playing');
+                    finishAll();
+                });
+            }).catch(function(e) {
+                state.stopped = true;
+                if (state.btn) state.btn.classList.remove('playing');
+                alert('朗读失败：' + e.message + '（请在有道智云控制台为应用绑定语音合成服务）');
+                finishAll();
+            });
+        }
+
+        function finishAll() {
+            if (state.btn && !state.stopped) state.btn.classList.remove('playing');
+            state.urls.forEach(function(u) {
+                try { URL.revokeObjectURL(u); } catch(e) {}
+            });
+            if (window._passagePlayState === state) window._passagePlayState = null;
+        }
+
+        playNext();
     }
 
     function togglePassage(i) {
